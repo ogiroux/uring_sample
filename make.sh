@@ -1,1 +1,1 @@
-g++ uring.cpp -o uring
+g++ -O2 uring.cpp -lpthread -o uring

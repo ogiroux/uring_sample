@@ -1,4 +1,5 @@
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <iostream>
 #include <numeric>
@@ -18,12 +19,8 @@ int main()
     io_uring_params p;
     std::memset(&p, 0, sizeof(p));
 
-/*
-    My intention is to use SQPOLL, but right now I'm avoiding it.
-
     p.flags |= IORING_SETUP_SQPOLL;
     p.sq_thread_idle = 1000000; //< Long time.
-*/
 
     int ioring_fd = __sys_io_uring_setup(ioring_size, &p);
     if(ioring_fd < 0) {
@@ -39,11 +36,13 @@ int main()
         unsigned *head;
         unsigned *tail;
         unsigned *ring_mask;
+        unsigned *flags;
         unsigned *array;
     } request = {
         (unsigned *)(sqptr + p.sq_off.head),
         (unsigned *)(sqptr + p.sq_off.tail),
         (unsigned *)(sqptr + p.sq_off.ring_mask),
+        (unsigned *)(sqptr + p.sq_off.flags),
         (unsigned *)(sqptr + p.sq_off.array)
     };
 
@@ -69,15 +68,28 @@ int main()
         (io_uring_cqe *)(cqptr + p.cq_off.cqes)
     };
 
-    int infd = open("myfile", O_RDONLY); //< This is a known gigabyte file.
-    assert(infd > 0);
+    int _infd = open("myfile", O_RDONLY);
+    assert(_infd > 0);
+
+    int infd = __sys_io_uring_register(ioring_fd,  IORING_REGISTER_FILES, &_infd, 1);
+    assert(_infd > 0);
 
     uint32_t sum = 0;
     uint32_t buff[1<<18];
     iovec vec = { buff, 1<<20 };
 
+    std::atomic_bool done = {false};
+    std::thread helper([&](){
+        while(!done) {
+            if (reinterpret_cast<std::atomic_uint&>(*request.flags) & IORING_SQ_NEED_WAKEUP)
+                __sys_io_uring_enter(ioring_fd, 1, 0, IORING_ENTER_SQ_WAKEUP, NULL);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    });
+
     for(int i = 0; i < (1<<10); ++i)
     {
+        // request
         {
             std::memset(sqentriesptr+0, 0, sizeof(io_uring_sqe));
             sqentriesptr[0].fd = infd;
@@ -85,51 +97,40 @@ int main()
             sqentriesptr[0].addr = (uint64_t)&vec;
             sqentriesptr[0].len = 1;
             sqentriesptr[0].off = i<<20;
+            sqentriesptr[0].flags = IOSQE_FIXED_FILE;
 
-            unsigned const tail = reinterpret_cast<std::atomic_uint&>(*request.tail);// & *request.ring_mask;
+            unsigned const tail = reinterpret_cast<std::atomic_uint&>(*request.tail);
             while(1)
             {
-                unsigned const head = reinterpret_cast<std::atomic_uint&>(*request.head);// & *request.ring_mask;
+                unsigned const head = reinterpret_cast<std::atomic_uint&>(*request.head);
                 if(head != ((tail + 1) & *request.ring_mask))
                     break;
-                // Just to prod it along
-                int const enter = __sys_io_uring_enter(ioring_fd, 1, 0, 0, NULL);
-                if(enter < 0) {
-    //                std::cout << "Error in enter : " << errno << std::endl;
-    //              abort();
-                }
             }
             request.array[tail & *request.ring_mask] = 0;
-            reinterpret_cast<std::atomic_uint&>(*request.tail) = (tail + 1);// & *request.ring_mask;
-            std::cout << "Appended [" << std::hex << i << "]" << std::flush;
+            reinterpret_cast<std::atomic_uint&>(*request.tail) = (tail + 1);
         }
+        // response
         {
-            unsigned const head = reinterpret_cast<std::atomic_uint&>(*response.head);// & *response.ring_mask;
+            unsigned const head = reinterpret_cast<std::atomic_uint&>(*response.head);
             while(1)
             {
-                unsigned const tail = reinterpret_cast<std::atomic_uint&>(*response.tail);// & *response.ring_mask;
+                unsigned const tail = reinterpret_cast<std::atomic_uint&>(*response.tail);
                 if(head != tail)
                     break;
-                // Just to prod it along
-                int const enter = __sys_io_uring_enter(ioring_fd, 1, 0, 0, NULL);
-                if(enter < 0) {
-    //                std::cout << "Error in enter : " << errno << std::endl;
-    //              abort();
-                }
             }
             if(response.array[head & *response.ring_mask].res < 0) {
                 std::cout << response.array[head & *response.ring_mask].res << std::endl;
                 abort();
             }
-            reinterpret_cast<std::atomic_uint&>(*response.head) = (head + 1);// & *response.ring_mask;
-//            __sys_io_uring_enter(ioring_fd, 1, 0, IORING_ENTER_GETEVENTS, NULL);
-
+            reinterpret_cast<std::atomic_uint&>(*response.head) = (head + 1);
             sum = std::accumulate(buff, buff + (1<<18), sum);
-            std::cout << " sum: " << std::dec << sum << "\n" << std::flush;
         }
     }
-    std::cout << "\n";
+    std::cout << " sum: " << std::dec << sum << std::endl;
 
+    done = true;
+    helper.join();
+    __sys_io_uring_register(ioring_fd,  IORING_UNREGISTER_FILES, &_infd, 1);
     close(infd);
     close(ioring_fd);
 
