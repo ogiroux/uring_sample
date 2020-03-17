@@ -76,23 +76,23 @@ int main()
     uint32_t buff[1<<18];
     iovec vec = { buff, 1<<20 };
 
-    std::memset(sqentriesptr+0, 0, sizeof(io_uring_sqe));
-    sqentriesptr[0].fd = infd;
-    sqentriesptr[0].opcode = IORING_OP_READV;
-    sqentriesptr[0].addr = (uint64_t)&vec;
-    sqentriesptr[0].len = 1;
-    for(int i = 0; i < (1<<30); ++i) 
+    for(int i = 0; i < (1<<10); ++i)
     {
+        std::memset(sqentriesptr+0, 0, sizeof(io_uring_sqe));
+        sqentriesptr[0].fd = infd;
+        sqentriesptr[0].opcode = IORING_OP_READV;
+        sqentriesptr[0].addr = (uint64_t)&vec;
+        sqentriesptr[0].len = 1;
         sqentriesptr[0].off = i<<20;
 
-        auto const off = reinterpret_cast<std::atomic_int&>(*request.tail).load(std::memory_order_relaxed) & *request.ring_mask;
+        auto const off = reinterpret_cast<std::atomic_int&>(*request.tail) & *request.ring_mask;
         request.array[off] = 0;
         reinterpret_cast<std::atomic_int&>(*request.tail) = (off + 1) & *request.ring_mask;
 
         auto const headptr = *response.head & *response.ring_mask;
         while(1)
         {
-            auto const tailptr = reinterpret_cast<std::atomic_int&>(*response.tail).load(std::memory_order_relaxed) & *response.ring_mask;
+            auto const tailptr = reinterpret_cast<std::atomic_int&>(*response.tail) & *response.ring_mask;
             if(headptr != tailptr)
                 break;
             // Just to prod it along
@@ -102,7 +102,7 @@ int main()
                 abort();
             }
         }
-        auto const res = reinterpret_cast<std::atomic_int&>(response.array[headptr].res).load(std::memory_order_relaxed);
+        int const res = reinterpret_cast<std::atomic_int&>(response.array[headptr].res);
         if(res < 0) {
             std::cout << res << std::endl;
             abort();
