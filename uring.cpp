@@ -93,7 +93,7 @@ int main()
                 if(head != ((tail + 1) & *request.ring_mask))
                     break;
                 // Just to prod it along
-                auto const enter = __sys_io_uring_enter(ioring_fd, 1, 1, 0, NULL);
+                auto const enter = __sys_io_uring_enter(ioring_fd, 1, 0, 0, NULL);
                 if(enter < 0) {
     //                std::cout << "Error in enter : " << errno << std::endl;
     //              abort();
@@ -111,7 +111,7 @@ int main()
                 if(head != tail)
                     break;
                 // Just to prod it along
-                auto const enter = __sys_io_uring_enter(ioring_fd, 1, 1, IORING_ENTER_GETEVENTS, NULL);
+                auto const enter = __sys_io_uring_enter(ioring_fd, 1, 0, 0, NULL);
                 if(enter < 0) {
     //                std::cout << "Error in enter : " << errno << std::endl;
     //              abort();
