@@ -69,7 +69,7 @@ int main()
         (io_uring_cqe *)(cqptr + p.cq_off.cqes)
     };
 
-    int infd = open("myfile", O_RDONLY);
+    int infd = open("myfile", O_RDONLY); //< This is a known gigabyte file.
     assert(infd > 0);
 
     uint32_t sum = 0;
@@ -78,39 +78,54 @@ int main()
 
     for(int i = 0; i < (1<<10); ++i)
     {
-        std::memset(sqentriesptr+0, 0, sizeof(io_uring_sqe));
-        sqentriesptr[0].fd = infd;
-        sqentriesptr[0].opcode = IORING_OP_READV;
-        sqentriesptr[0].addr = (uint64_t)&vec;
-        sqentriesptr[0].len = 1;
-        sqentriesptr[0].off = i<<20;
-
-        auto const off = reinterpret_cast<std::atomic_int&>(*request.tail) & *request.ring_mask;
-        request.array[off] = 0;
-        reinterpret_cast<std::atomic_int&>(*request.tail) = (off + 1) & *request.ring_mask;
-
-        auto const headptr = *response.head & *response.ring_mask;
-        while(1)
         {
-            auto const tailptr = reinterpret_cast<std::atomic_int&>(*response.tail) & *response.ring_mask;
-            if(headptr != tailptr)
-                break;
-            // Just to prod it along
-            auto const enter = __sys_io_uring_enter(ioring_fd, 1, 1, 0, NULL);
-            if(enter < 0) {
-                std::cout << "Error in enter : " << errno << std::endl;
+            std::memset(sqentriesptr+0, 0, sizeof(io_uring_sqe));
+            sqentriesptr[0].fd = infd;
+            sqentriesptr[0].opcode = IORING_OP_READV;
+            sqentriesptr[0].addr = (uint64_t)&vec;
+            sqentriesptr[0].len = 1;
+            sqentriesptr[0].off = i<<20;
+
+            auto const tail = reinterpret_cast<std::atomic_int&>(*request.tail) & *request.ring_mask;
+            while(1)
+            {
+                auto const head = reinterpret_cast<std::atomic_int&>(*request.head) & *request.ring_mask;
+                if(head != ((tail + 1) & *request.ring_mask))
+                    break;
+                // Just to prod it along
+                auto const enter = __sys_io_uring_enter(ioring_fd, 1, 1, 0, NULL);
+                if(enter < 0) {
+    //                std::cout << "Error in enter : " << errno << std::endl;
+    //              abort();
+                }
+            }
+            request.array[tail] = 0;
+            reinterpret_cast<std::atomic_int&>(*request.tail) = (tail + 1) & *request.ring_mask;
+            std::cout << "Appended [" << std::hex << i << "]" << std::flush;
+        }
+        {
+            auto const head = reinterpret_cast<std::atomic_int&>(*response.head) & *response.ring_mask;
+            while(1)
+            {
+                auto const tail = reinterpret_cast<std::atomic_int&>(*response.tail) & *response.ring_mask;
+                if(head != tail)
+                    break;
+                // Just to prod it along
+                auto const enter = __sys_io_uring_enter(ioring_fd, 1, 1, IORING_ENTER_GETEVENTS, NULL);
+                if(enter < 0) {
+    //                std::cout << "Error in enter : " << errno << std::endl;
+    //              abort();
+                }
+            }
+            if(response.array[head].res < 0) {
+                std::cout << response.array[head].res << std::endl;
                 abort();
             }
-        }
-        int const res = reinterpret_cast<std::atomic_int&>(response.array[headptr].res);
-        if(res < 0) {
-            std::cout << res << std::endl;
-            abort();
-        }
-        reinterpret_cast<std::atomic_int&>(*response.head) = (headptr + 1) & *response.ring_mask;
+            reinterpret_cast<std::atomic_int&>(*response.head) = (head + 1) & *response.ring_mask;
 
-        sum = std::accumulate(buff, buff + (1<<18), sum);
-        std::cout << "\rSum: " << sum;
+            sum = std::accumulate(buff, buff + (1<<18), sum);
+            std::cout << " sum: " << std::dec << sum << "\n" << std::flush;
+        }
     }
     std::cout << "\n";
 
