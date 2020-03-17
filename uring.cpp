@@ -86,10 +86,10 @@ int main()
             sqentriesptr[0].len = 1;
             sqentriesptr[0].off = i<<20;
 
-            auto const tail = reinterpret_cast<std::atomic_int&>(*request.tail) & *request.ring_mask;
+            auto const tail = reinterpret_cast<std::atomic_uint&>(*request.tail) & *request.ring_mask;
             while(1)
             {
-                auto const head = reinterpret_cast<std::atomic_int&>(*request.head) & *request.ring_mask;
+                auto const head = reinterpret_cast<std::atomic_uint&>(*request.head) & *request.ring_mask;
                 if(head != ((tail + 1) & *request.ring_mask))
                     break;
                 // Just to prod it along
@@ -100,14 +100,14 @@ int main()
                 }
             }
             request.array[tail] = 0;
-            reinterpret_cast<std::atomic_int&>(*request.tail) = (tail + 1) & *request.ring_mask;
+            reinterpret_cast<std::atomic_uint&>(*request.tail) = (tail + 1) & *request.ring_mask;
             std::cout << "Appended [" << std::hex << i << "]" << std::flush;
         }
         {
-            auto const head = reinterpret_cast<std::atomic_int&>(*response.head) & *response.ring_mask;
+            auto const head = reinterpret_cast<std::atomic_uint&>(*response.head) & *response.ring_mask;
             while(1)
             {
-                auto const tail = reinterpret_cast<std::atomic_int&>(*response.tail) & *response.ring_mask;
+                auto const tail = reinterpret_cast<std::atomic_uint&>(*response.tail) & *response.ring_mask;
                 if(head != tail)
                     break;
                 // Just to prod it along
@@ -121,7 +121,7 @@ int main()
                 std::cout << response.array[head].res << std::endl;
                 abort();
             }
-            reinterpret_cast<std::atomic_int&>(*response.head) = (head + 1) & *response.ring_mask;
+            reinterpret_cast<std::atomic_uint&>(*response.head) = (head + 1) & *response.ring_mask;
 
             sum = std::accumulate(buff, buff + (1<<18), sum);
             std::cout << " sum: " << std::dec << sum << "\n" << std::flush;
