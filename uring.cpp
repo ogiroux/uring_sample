@@ -86,42 +86,43 @@ int main()
             sqentriesptr[0].len = 1;
             sqentriesptr[0].off = i<<20;
 
-            auto const tail = reinterpret_cast<std::atomic_uint&>(*request.tail) & *request.ring_mask;
+            unsigned const tail = reinterpret_cast<std::atomic_uint&>(*request.tail);// & *request.ring_mask;
             while(1)
             {
-                auto const head = reinterpret_cast<std::atomic_uint&>(*request.head) & *request.ring_mask;
+                unsigned const head = reinterpret_cast<std::atomic_uint&>(*request.head);// & *request.ring_mask;
                 if(head != ((tail + 1) & *request.ring_mask))
                     break;
                 // Just to prod it along
-                auto const enter = __sys_io_uring_enter(ioring_fd, 1, 0, 0, NULL);
+                int const enter = __sys_io_uring_enter(ioring_fd, 1, 0, 0, NULL);
                 if(enter < 0) {
     //                std::cout << "Error in enter : " << errno << std::endl;
     //              abort();
                 }
             }
-            request.array[tail] = 0;
-            reinterpret_cast<std::atomic_uint&>(*request.tail) = (tail + 1) & *request.ring_mask;
+            request.array[tail & *request.ring_mask] = 0;
+            reinterpret_cast<std::atomic_uint&>(*request.tail) = (tail + 1);// & *request.ring_mask;
             std::cout << "Appended [" << std::hex << i << "]" << std::flush;
         }
         {
-            auto const head = reinterpret_cast<std::atomic_uint&>(*response.head) & *response.ring_mask;
+            unsigned const head = reinterpret_cast<std::atomic_uint&>(*response.head);// & *response.ring_mask;
             while(1)
             {
-                auto const tail = reinterpret_cast<std::atomic_uint&>(*response.tail) & *response.ring_mask;
+                unsigned const tail = reinterpret_cast<std::atomic_uint&>(*response.tail);// & *response.ring_mask;
                 if(head != tail)
                     break;
                 // Just to prod it along
-                auto const enter = __sys_io_uring_enter(ioring_fd, 1, 0, 0, NULL);
+                int const enter = __sys_io_uring_enter(ioring_fd, 1, 0, 0, NULL);
                 if(enter < 0) {
     //                std::cout << "Error in enter : " << errno << std::endl;
     //              abort();
                 }
             }
-            if(response.array[head].res < 0) {
-                std::cout << response.array[head].res << std::endl;
+            if(response.array[head & *response.ring_mask].res < 0) {
+                std::cout << response.array[head & *response.ring_mask].res << std::endl;
                 abort();
             }
-            reinterpret_cast<std::atomic_uint&>(*response.head) = (head + 1) & *response.ring_mask;
+            reinterpret_cast<std::atomic_uint&>(*response.head) = (head + 1);// & *response.ring_mask;
+//            __sys_io_uring_enter(ioring_fd, 1, 0, IORING_ENTER_GETEVENTS, NULL);
 
             sum = std::accumulate(buff, buff + (1<<18), sum);
             std::cout << " sum: " << std::dec << sum << "\n" << std::flush;
